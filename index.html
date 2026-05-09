@@ -93,6 +93,7 @@
       <button onclick="go('routine')" class="px-3 py-1.5 rounded-full hover:bg-mint-50">루틴</button>
       <button onclick="go('tracking')" class="px-3 py-1.5 rounded-full hover:bg-mint-50">트래킹</button>
     </nav>
+    <div id="autodemoCtl" class="flex items-center gap-2"></div>
     <button onclick="startDiagnosis()" class="bg-mint-600 hover:bg-mint-700 text-white text-sm font-semibold px-4 py-2 rounded-full">진단 시작</button>
   </div>
 </header>
@@ -422,6 +423,7 @@
     <!-- products -->
     <div class="mb-2 text-sm text-gray-500">한국 시판 매칭 제품 <span class="text-xs text-gray-400 ml-1">· 가격·성분 적합도·안전 점수 가중</span></div>
     <div id="productGrid" class="grid md:grid-cols-2 lg:grid-cols-3 gap-4"></div>
+    <p class="text-xs text-gray-400 mt-3">※ 외부 쇼핑몰 검색 페이지로 이동합니다. 검색 결과는 실제 상품과 1:1로 일치하지 않을 수 있습니다.</p>
 
     <div class="mt-8 flex justify-between">
       <button onclick="go('result')" class="text-gray-500 text-sm">← 결과로</button>
@@ -763,10 +765,9 @@ function runSelfie(){
 function skipSelfie(){ go('result'); }
 
 // ======= Recommend tab =======
+// btn kept for onclick="selectTrouble(this, key)" HTML compatibility (param unused)
 function selectTrouble(btn, key){
-  document.querySelectorAll('#troubleTabs .chip').forEach(c=>c.classList.remove('active'));
-  btn.classList.add('active');
-  renderRecommend(key);
+  Router.navigate('recommend', { trouble: key });
 }
 function renderRecommend(key){
   const t = TROUBLES[key];
@@ -798,7 +799,13 @@ function renderRecommend(key){
       <div class="flex flex-wrap gap-1 mt-3">${p.key.map(k=>`<span class="badge pill-${INGREDIENTS[k]?.grade||'B'}">${INGREDIENTS[k]?.kor||k}</span>`).join('')}</div>
       <div class="flex justify-between items-center mt-4">
         <div class="font-extrabold">${p.price.toLocaleString()}원</div>
-        <button class="bg-mint-600 hover:bg-mint-700 text-white text-xs font-semibold px-3 py-1.5 rounded-full">구매처 보기</button>
+        <div class="relative inline-block" data-shop-menu>
+          <button class="bg-mint-600 hover:bg-mint-700 text-white text-xs font-semibold px-3 py-1.5 rounded-full" onclick="Shop.toggle(this)">구매처 보기 ▾</button>
+          <div data-shop-list class="hidden absolute right-0 mt-1 bg-white border border-gray-200 rounded-xl shadow-lg z-10 w-36">
+            <a href="${Shop.oliveyoung(Shop.query(p))}" target="_blank" rel="noopener noreferrer" class="block px-3 py-2 text-sm hover:bg-mint-50 rounded-t-xl">올리브영 검색</a>
+            <a href="${Shop.coupang(Shop.query(p))}" target="_blank" rel="noopener noreferrer" class="block px-3 py-2 text-sm hover:bg-mint-50 rounded-b-xl border-t border-gray-100">쿠팡 검색</a>
+          </div>
+        </div>
       </div>
     </div>`;
   }).join('');
@@ -831,17 +838,180 @@ function openIngredient(id){
 function closeIngredient(){ document.getElementById('ingredientModal').classList.add('hidden'); }
 
 function openTrouble(key){
-  go('recommend');
-  const btn = document.querySelector(`#troubleTabs .chip[data-key="${key}"]`);
-  if(btn) selectTrouble(btn, key);
+  Router.navigate('recommend', { trouble: key });
 }
 
+// ======= Router =======
+const Router = {
+  SCREENS: ['home','onboarding','survey','selfie','result','recommend','routine','tracking'],
+  TROUBLES: Object.keys(TROUBLES),
+  DEFAULT_TROUBLE: 'pih',
+
+  parse(hash){
+    const m = (hash || '').match(/^#\/([^/]+)(?:\/([^/]+))?$/);
+    if(!m) return { screen:'home', trouble:null };
+    const screen = m[1];
+    if(!Router.SCREENS.includes(screen)) return { screen:'home', trouble:null };
+    let trouble = null;
+    if(screen === 'recommend'){
+      trouble = Router.TROUBLES.includes(m[2]) ? m[2] : Router.DEFAULT_TROUBLE;
+    }
+    return { screen, trouble };
+  },
+
+  navigate(screen, opts){
+    opts = opts || {};
+    let trouble = opts.trouble;
+    // recommend 로 이동할 때 trouble 미지정이면 현재 URL 의 trouble 유지 (header nav 등에서 탭 보존)
+    if(screen === 'recommend' && !trouble){
+      const cur = Router.parse(location.hash);
+      if(cur.screen === 'recommend' && cur.trouble) trouble = cur.trouble;
+    }
+    let h = '#/' + screen;
+    if(screen === 'recommend' && trouble) h += '/' + trouble;
+    if(location.hash === h){
+      // 같은 hash 재선택은 hashchange 발화 안 됨 → 직접 적용
+      Router.apply(Router.parse(h));
+    } else {
+      location.hash = h;
+    }
+  },
+
+  apply(route){
+    document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
+    const target = document.getElementById(route.screen);
+    if(target){
+      target.classList.add('active');
+      window.scrollTo({top:0, behavior:'smooth'});
+    }
+    if(route.screen === 'recommend' && route.trouble){
+      document.querySelectorAll('#troubleTabs .chip').forEach(c=>{
+        c.classList.toggle('active', c.dataset.key === route.trouble);
+      });
+      renderRecommend(route.trouble);
+    }
+  },
+
+  applyHash(){
+    const route = Router.parse(location.hash);
+    const canonical = '#/' + route.screen + (route.trouble ? '/' + route.trouble : '');
+    if(location.hash !== canonical){
+      // 잘못된/비정규 hash → 정규형으로 교정. location.replace 가 다시 hashchange 를 발화시켜 applyHash 가 재호출됨.
+      location.replace(canonical);
+    } else {
+      Router.apply(route);
+    }
+  },
+
+  init(){
+    window.addEventListener('hashchange', Router.applyHash);
+    if(!location.hash){
+      location.replace('#/home');
+    } else {
+      Router.applyHash();
+    }
+  }
+};
+
+// ======= AutoDemo =======
+const AutoDemo = {
+  SEQ: Router.SCREENS,
+  DWELL: { home:3000, onboarding:4000, survey:4000, selfie:4000, result:6000, recommend:6000, routine:4000, tracking:5000 },
+  state: 'idle',  // 'idle' | 'playing' | 'paused' | 'finished'
+  idx: 0,
+  timer: null,
+
+  play(){
+    if(this.state !== 'idle' && this.state !== 'finished') return;
+    this.idx = 0;
+    this.state = 'playing';
+    Router.navigate(this.SEQ[0]);
+    this.scheduleNext();
+    this.renderCtl();
+  },
+
+  pause(){
+    if(this.state !== 'playing') return;
+    if(this.timer){ clearTimeout(this.timer); this.timer = null; }
+    this.state = 'paused';
+    this.renderCtl();
+  },
+
+  resume(){
+    if(this.state !== 'paused') return;
+    this.state = 'playing';
+    // 디자인 결정: 남은 시간이 아닌 현재 화면 dwell 전체를 다시 시작
+    this.scheduleNext();
+    this.renderCtl();
+  },
+
+  stop(){
+    if(this.state === 'idle') return;
+    if(this.timer){ clearTimeout(this.timer); this.timer = null; }
+    this.state = 'idle';
+    this.idx = 0;
+    this.renderCtl();
+  },
+
+  scheduleNext(){
+    if(this.timer){ clearTimeout(this.timer); this.timer = null; }
+    const cur = this.SEQ[this.idx];
+    const ms = this.DWELL[cur] || 4000;
+    this.timer = setTimeout(()=> this.tick(), ms);
+  },
+
+  tick(){
+    this.timer = null;
+    if(this.state !== 'playing') return;
+    this.idx += 1;
+    if(this.idx >= this.SEQ.length){
+      this.state = 'finished';
+      this.renderCtl();
+      return;
+    }
+    Router.navigate(this.SEQ[this.idx]);
+    this.scheduleNext();
+    this.renderCtl();  // (n / 8) 카운터 업데이트
+  },
+
+  renderCtl(){
+    const el = document.getElementById('autodemoCtl');
+    if(!el) return;
+    const cls = 'text-mint-700 border border-mint-300 hover:bg-mint-50 text-sm font-semibold px-3 py-1.5 rounded-full';
+    if(this.state === 'idle'){
+      el.innerHTML = `<button data-autodemo-ctl onclick="AutoDemo.play()" class="${cls}">▶ Auto demo</button>`;
+    } else if(this.state === 'playing'){
+      el.innerHTML = `<button data-autodemo-ctl onclick="AutoDemo.pause()" class="${cls}">⏸ 일시정지 (${this.idx+1} / ${this.SEQ.length})</button>`;
+    } else if(this.state === 'paused'){
+      el.innerHTML = `
+        <button data-autodemo-ctl onclick="AutoDemo.resume()" class="${cls}">▶ 재개</button>
+        <button data-autodemo-ctl onclick="AutoDemo.stop()" class="${cls}">■ 종료</button>`;
+    } else if(this.state === 'finished'){
+      el.innerHTML = `<button data-autodemo-ctl onclick="AutoDemo.play()" class="${cls}">↻ 다시 재생</button>`;
+    }
+  }
+};
+
+// ======= Shop =======
+const Shop = {
+  oliveyoung(q){ return 'https://www.oliveyoung.co.kr/store/search/getSearchMain.do?query=' + encodeURIComponent(q); },
+  coupang(q){ return 'https://www.coupang.com/np/search?q=' + encodeURIComponent(q); },
+  query(p){ return p.brand + ' ' + p.name; },
+
+  toggle(btn){
+    const menu = btn.parentElement.querySelector('[data-shop-list]');
+    const isOpen = !menu.classList.contains('hidden');
+    Shop.closeAll();
+    if(!isOpen) menu.classList.remove('hidden');
+  },
+
+  closeAll(){
+    document.querySelectorAll('[data-shop-menu] [data-shop-list]').forEach(el=> el.classList.add('hidden'));
+  }
+};
+
 // ======= Nav =======
-function go(id){
-  document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
-  const target = document.getElementById(id);
-  if(target){ target.classList.add('active'); window.scrollTo({top:0,behavior:'smooth'}); }
-}
+function go(id){ Router.navigate(id); }
 function startDiagnosis(){ surveyIdx=0; surveyAnswers.fill(null); renderSurvey(); go('onboarding'); }
 function toggleChip(el, group){
   el.parentElement.querySelectorAll('.chip').forEach(c=>c.classList.remove('active'));
@@ -849,7 +1019,16 @@ function toggleChip(el, group){
 }
 
 // init
-renderRecommend('pih');
+Router.init();
+AutoDemo.renderCtl();
+document.addEventListener('click', (e)=>{
+  if(AutoDemo.state === 'playing' && !e.target.closest('[data-autodemo-ctl]')){
+    AutoDemo.pause();
+  }
+}, true); // capture 단계: 다른 핸들러보다 먼저 평가, 핸들러 동작 자체는 막지 않음
+document.addEventListener('click', (e)=>{
+  if(!e.target.closest('[data-shop-menu]')) Shop.closeAll();
+});
 </script>
 </body>
 </html>
